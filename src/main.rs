@@ -3,16 +3,14 @@ use clap::Parser;
 use env_logger;
 use log::{error, info, warn};
 use num_cpus;
-use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
-use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
-use rdkafka::producer::{BaseRecord, DefaultProducerContext, ThreadedProducer};
+use rdkafka::producer::{BaseRecord, DefaultProducerContext, Producer, ThreadedProducer};
 use serde::Serialize;
 use signal_hook::{consts::SIGTERM, iterator::Signals};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tokio::runtime::Runtime;
+use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 
 #[derive(Serialize)]
 struct Context {
@@ -82,12 +80,6 @@ impl RateLimiter {
 #[derive(Parser, Debug, Clone)]
 struct Args {
     #[clap(short, long)]
-    username: String,
-
-    #[clap(short, long)]
-    password: String,
-
-    #[clap(short, long)]
     brokers: String,
 
     #[clap(short, long)]
@@ -135,42 +127,12 @@ fn get_buffer() -> &'static str {
     Box::leak(result.into_boxed_str())
 }
 
-async fn create_topic_if_not_exists(args: Args) {
-    let admin_client: AdminClient<DefaultClientContext> =
-    ClientConfig::new()
-        .set("bootstrap.servers", args.brokers)
-        .set("sasl.mechanisms", "SCRAM-SHA-512")
-        .set("security.protocol", "SASL_SSL")
-        .set("sasl.username", args.username)
-        .set("sasl.password", args.password)
-        .create()
-        .expect("Admin client creation failed");
-
-    info!("Creating topic '{}' with 128 partitions", &args.topic);
-    let new_topic = NewTopic::new(&args.topic, 128, TopicReplication::Fixed(1));
-    let admin_opts = AdminOptions::new().operation_timeout(Some(Duration::from_secs(5)));
-    let res = admin_client.create_topics(&[new_topic], &admin_opts).await;
-    match res {
-        Ok(_) => info!("Topic created successfully"),
-        Err(e) => error!("Failed to create topic {:?}", e),
-    }
-}
-
 fn main() {
     env_logger::init();
 
     let args: Args = Args::parse();
-
-    // Create a new runtime and block on it to call the async function
-    let rt = Runtime::new().expect("Failed to create Tokio runtime");
-    rt.block_on(create_topic_if_not_exists(args.clone()));
-
     let producer: ThreadedProducer<DefaultProducerContext> = ClientConfig::new()
         .set("bootstrap.servers", args.brokers)
-        .set("sasl.mechanisms", "SCRAM-SHA-512")
-        .set("security.protocol", "SASL_SSL")
-        .set("sasl.username", args.username)
-        .set("sasl.password", args.password)
         .set("queue.buffering.max.messages", "1000000")
         .set("batch.num.messages", "10000")
         .set("queue.buffering.max.kbytes", "1048576")
@@ -240,9 +202,13 @@ fn main() {
                         }
                     };
 
-                    producer
-                        .send::<String, String>(BaseRecord::to(&topic).payload(&payload))
-                        .expect("failed to send message")
+                    if let Err((e, _)) = producer
+                        .send::<String, String>(BaseRecord::to(&topic).payload(&payload)) {
+                        if should_flush(e) {
+                            producer.flush(Duration::from_secs(10))
+                        }
+                    }
+
                 }
 
                 if let Some(duration) = rate_limiter.sleep() {
@@ -267,5 +233,12 @@ fn main() {
     // Prevent the main thread from exiting until all threads have finished
     loop {
         thread::park();
+    }
+}
+
+fn should_flush(result: KafkaError) -> bool {
+    match result {
+        KafkaError::MessageProduction(code) if code ==  RDKafkaErrorCode::QueueFull => true,
+        _ => false
     }
 }
