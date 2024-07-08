@@ -46,7 +46,7 @@ struct SegmentEvent {
     body: Body,
     properties: Properties,
     event: &'static str,
-    buffer: &'static str,
+    buffer: &'static [u8],
 }
 
 struct RateLimiter {
@@ -125,8 +125,25 @@ fn get_random_strings() -> Pool {
     }
 }
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn generate_random_bytes(len: usize) -> &'static [u8] {
+    let mut bytes = Vec::with_capacity(len);
+    let mut seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs() as u64;
+
+    for _ in 0..len {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        bytes.push((seed >> 24) as u8);
+    }
+
+    Box::leak(bytes.into_boxed_slice())
+}
+
 fn get_buffer(size: usize) -> &'static str {
-    let mut result = String::with_capacity(700);
+    let mut result = String::with_capacity(size);
     let mut current_size = 0;
 
     while current_size < size {
@@ -171,7 +188,7 @@ fn main() {
 
     println!("generating random data");
     let random_strings = get_random_strings();
-    let buffer = get_buffer(args.buffer_size);
+    let buffer = generate_random_bytes(args.buffer_size);//get_buffer(args.buffer_size);
 
     println!("producing {} elems per second", args.num_elems_per_second);
     println!("spawning {num_threads} threads");
