@@ -79,8 +79,14 @@ impl RateLimiter {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 struct Args {
+    #[clap(short, long)]
+    username: String,
+
+    #[clap(short, long)]
+    password: String,
+
     #[clap(short, long)]
     brokers: String,
 
@@ -129,19 +135,24 @@ fn get_buffer() -> &'static str {
     Box::leak(result.into_boxed_str())
 }
 
-async fn create_topic_if_not_exists(brokers: &str, topic: &str) {
-    let admin_client: AdminClient<DefaultClientContext> = ClientConfig::new()
-        .set("bootstrap.servers", brokers)
+async fn create_topic_if_not_exists(args: Args) {
+    let admin_client: AdminClient<DefaultClientContext> =
+    ClientConfig::new()
+        .set("bootstrap.servers", args.brokers)
+        .set("sasl.mechanisms", "SCRAM-SHA-512")
+        .set("security.protocol", "SASL_SSL")
+        .set("sasl.username", args.username)
+        .set("sasl.password", args.password)
         .create()
         .expect("Admin client creation failed");
 
-    info!("Creating topic '{}' with 128 partitions", topic);
-    let new_topic = NewTopic::new(topic, 128, TopicReplication::Fixed(1));
+    info!("Creating topic '{}' with 128 partitions", &args.topic);
+    let new_topic = NewTopic::new(&args.topic, 128, TopicReplication::Fixed(1));
     let admin_opts = AdminOptions::new().operation_timeout(Some(Duration::from_secs(5)));
     let res = admin_client.create_topics(&[new_topic], &admin_opts).await;
     match res {
-        Ok(_) => info!("Topic '{}' created successfully", topic),
-        Err(e) => error!("Failed to create topic '{}': {:?}", topic, e),
+        Ok(_) => info!("Topic created successfully"),
+        Err(e) => error!("Failed to create topic {:?}", e),
     }
 }
 
@@ -152,10 +163,14 @@ fn main() {
 
     // Create a new runtime and block on it to call the async function
     let rt = Runtime::new().expect("Failed to create Tokio runtime");
-    rt.block_on(create_topic_if_not_exists(&args.brokers, &args.topic));
+    rt.block_on(create_topic_if_not_exists(args.clone()));
 
     let producer: ThreadedProducer<DefaultProducerContext> = ClientConfig::new()
-        .set("bootstrap.servers", args.brokers.clone())
+        .set("bootstrap.servers", args.brokers)
+        .set("sasl.mechanisms", "SCRAM-SHA-512")
+        .set("security.protocol", "SASL_SSL")
+        .set("sasl.username", args.username)
+        .set("sasl.password", args.password)
         .set("queue.buffering.max.messages", "1000000")
         .set("batch.num.messages", "10000")
         .set("queue.buffering.max.kbytes", "1048576")
@@ -170,8 +185,6 @@ fn main() {
 
     let shutdown_flag = Arc::new(Mutex::new(false));
     let shutdown_flag_clone = shutdown_flag.clone();
-
-    //create_topic_if_not_exists(&args.brokers, &args.topic);
 
     let num_cores = num_cpus::get();
     let num_elems = args.num_elems_per_second / num_cores;
