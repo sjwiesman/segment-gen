@@ -91,8 +91,8 @@ struct Args {
     #[clap(short, long)]
     topic: String,
 
-    #[clap(short, long, default_value_t = 1000)]
-    buffer: usize,
+    #[clap(long, default_value_t = 1000)]
+    buffer_size: usize,
 
     #[clap(short, long, default_value_t = 1024000)]
     num_elems_per_second: usize,
@@ -171,7 +171,7 @@ fn main() {
 
     println!("generating random data");
     let random_strings = get_random_strings();
-    let buffer = get_buffer(args.buffer);
+    let buffer = get_buffer(args.buffer_size);
 
     println!("producing {} elems per second", args.num_elems_per_second);
     println!("spawning {num_threads} threads");
