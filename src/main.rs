@@ -4,13 +4,13 @@ use env_logger;
 use log::{error, info, warn};
 use num_cpus;
 use rdkafka::config::ClientConfig;
+use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use rdkafka::producer::{BaseRecord, DefaultProducerContext, Producer, ThreadedProducer};
 use serde::Serialize;
 use signal_hook::{consts::SIGTERM, iterator::Signals};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 
 #[derive(Serialize)]
 struct Context {
@@ -149,11 +149,15 @@ fn main() {
     let shutdown_flag_clone = shutdown_flag.clone();
 
     let num_cores = num_cpus::get();
-    let num_elems = args.num_elems_per_second / num_cores;
+    let (num_threads, num_elems) = if num_cores < args.num_elems_per_second {
+        (args.num_elems_per_second, 1)
+    } else {
+        (num_cores, args.num_elems_per_second / num_cores)
+    };
 
     println!("producing {} elems per second", args.num_elems_per_second);
-    println!("spawning {num_cores} threads");
-    for core_id in 0..num_cores {
+    println!("spawning {num_threads} threads");
+    for core_id in 0..num_threads {
         let producer = producer.clone();
         let shutdown_flag = shutdown_flag.clone();
         let topic = args.topic.clone();
@@ -202,13 +206,13 @@ fn main() {
                         }
                     };
 
-                    if let Err((e, _)) = producer
-                        .send::<String, String>(BaseRecord::to(&topic).payload(&payload)) {
-                        if should_flush(e) {
+                    if let Err((e, _)) =
+                        producer.send::<String, String>(BaseRecord::to(&topic).payload(&payload))
+                    {
+                        if matches!(result, KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull)) {
                             producer.flush(Duration::from_secs(10))
                         }
                     }
-
                 }
 
                 if let Some(duration) = rate_limiter.sleep() {
@@ -233,12 +237,5 @@ fn main() {
     // Prevent the main thread from exiting until all threads have finished
     loop {
         thread::park();
-    }
-}
-
-fn should_flush(result: KafkaError) -> bool {
-    match result {
-        KafkaError::MessageProduction(code) if code ==  RDKafkaErrorCode::QueueFull => true,
-        _ => false
     }
 }
