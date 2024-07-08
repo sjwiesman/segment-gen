@@ -80,6 +80,12 @@ impl RateLimiter {
 #[derive(Parser, Debug, Clone)]
 struct Args {
     #[clap(short, long)]
+    username: String,
+
+    #[clap(short, long)]
+    password: String,
+
+    #[clap(short, long)]
     brokers: String,
 
     #[clap(short, long)]
@@ -133,7 +139,11 @@ fn main() {
 
     let args: Args = Args::parse();
     let producer: ThreadedProducer<DefaultProducerContext> = ClientConfig::new()
+        .set("security.protocol", "SASL_SSL")
+        .set("sasl.mechanism", "PLAIN")
         .set("bootstrap.servers", args.brokers)
+        .set("sasl.username", args.username)
+        .set("sasl.password", args.password)
         .set("queue.buffering.max.messages", "1000000")
         .set("batch.num.messages", "10000")
         .set("queue.buffering.max.kbytes", "1048576")
@@ -219,7 +229,7 @@ fn main() {
                             e,
                             KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull)
                         ) {
-                            producer.flush(Duration::from_secs(10))
+                            let _ = producer.flush(Duration::from_secs(10));
                         }
                     }
                 }
