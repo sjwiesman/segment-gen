@@ -89,6 +89,7 @@ struct Args {
     num_elems_per_second: usize,
 }
 
+#[derive(Clone)]
 struct Pool {
     vec: Vec<&'static str>,
     index: usize,
@@ -155,16 +156,21 @@ fn main() {
         (num_cores, args.num_elems_per_second / num_cores)
     };
 
+    println!("generating random data");
+    let random_strings = get_random_strings();
+    let buffer = get_buffer();
+
     println!("producing {} elems per second", args.num_elems_per_second);
     println!("spawning {num_threads} threads");
+
     for core_id in 0..num_threads {
         let producer = producer.clone();
         let shutdown_flag = shutdown_flag.clone();
         let topic = args.topic.clone();
+        let mut random_strings = random_strings.clone();
+
         thread::spawn(move || {
             let mut rate_limiter = RateLimiter::new(Duration::from_secs(1));
-            let mut random_strings = get_random_strings();
-            let buffer = get_buffer();
 
             loop {
                 let now = Utc::now().to_rfc3339();
@@ -209,7 +215,10 @@ fn main() {
                     if let Err((e, _)) =
                         producer.send::<String, String>(BaseRecord::to(&topic).payload(&payload))
                     {
-                        if matches!(result, KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull)) {
+                        if matches!(
+                            e,
+                            KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull)
+                        ) {
                             producer.flush(Duration::from_secs(10))
                         }
                     }
