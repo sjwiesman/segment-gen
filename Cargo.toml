@@ -1,0 +1,17 @@
+[package]
+name = "segment-gen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rdkafka = "0.28"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+num_cpus = "1.13"
+log = "0.4"
+env_logger = "0.9"
+signal-hook = "0.3"
+clap = { version = "4.0", features = ["derive"] }
+tokio = { version = "1.38.0", features = ["full"] }
+
