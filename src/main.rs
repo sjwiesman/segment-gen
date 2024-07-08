@@ -160,7 +160,7 @@ fn main() {
     let shutdown_flag_clone = shutdown_flag.clone();
 
     let num_cores = num_cpus::get();
-    let (num_threads, num_elems) = if num_cores < args.num_elems_per_second {
+    let (num_threads, num_elems) = if args.num_elems_per_second < num_cores  {
         (args.num_elems_per_second, 1)
     } else {
         (num_cores, args.num_elems_per_second / num_cores)
