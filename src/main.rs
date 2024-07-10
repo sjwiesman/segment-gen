@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use chrono::Utc;
 use clap::Parser;
 use env_logger;
@@ -46,7 +47,8 @@ struct SegmentEvent {
     body: Body,
     properties: Properties,
     event: &'static str,
-    buffer: &'static str,
+    #[serde(flatten)]
+    buffer: &'static HashMap<String, String>,
 }
 
 struct RateLimiter {
@@ -127,7 +129,7 @@ fn get_random_strings() -> Pool {
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn random_string(size: usize) -> &'static str {
+fn random_string(size: usize) -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     const CHARSET_LEN: usize = CHARSET.len();
 
@@ -143,8 +145,25 @@ fn random_string(size: usize) -> &'static str {
         result.push(CHARSET[idx] as char);
     }
 
-    // Leak the String to turn it into a &'static str
-    Box::leak(result.into_boxed_str())
+    result
+}
+
+fn generate_map(total_size: usize) -> &'static HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut current_size = 0;
+
+    while current_size < total_size {
+        // Assume average key and value size
+        let key_size = 8;
+        let value_size = 16;
+        let key = random_string(key_size);
+        let value = random_string(value_size);
+
+        current_size += key_size + value_size;
+        map.insert(key, value);
+    }
+
+    Box::leak(Box::new(map))
 }
 
 fn get_buffer(size: usize) -> &'static str {
@@ -193,7 +212,7 @@ fn main() {
 
     println!("generating random data");
     let random_strings = get_random_strings();
-    let buffer = random_string(args.buffer_size);//get_buffer(args.buffer_size);
+    let buffer = generate_map(args.buffer_size);
 
     println!("producing {} elems per second", args.num_elems_per_second);
     println!("spawning {num_threads} threads");
