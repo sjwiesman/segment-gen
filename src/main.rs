@@ -46,7 +46,7 @@ struct SegmentEvent {
     body: Body,
     properties: Properties,
     event: &'static str,
-    buffer: &'static [u8],
+    buffer: &'static str,
 }
 
 struct RateLimiter {
@@ -127,19 +127,24 @@ fn get_random_strings() -> Pool {
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn generate_random_bytes(len: usize) -> &'static [u8] {
-    let mut bytes = Vec::with_capacity(len);
-    let mut seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_secs() as u64;
+fn random_string(size: usize) -> &'static str {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const CHARSET_LEN: usize = CHARSET.len();
 
-    for _ in 0..len {
+    let mut result = String::with_capacity(size);
+
+    let start = SystemTime::now();
+    let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("Time went backwards");
+    let mut seed = since_the_epoch.as_secs() as usize;
+
+    for _ in 0..size {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        bytes.push((seed >> 24) as u8);
+        let idx = seed % CHARSET_LEN;
+        result.push(CHARSET[idx] as char);
     }
 
-    Box::leak(bytes.into_boxed_slice())
+    // Leak the String to turn it into a &'static str
+    Box::leak(result.into_boxed_str())
 }
 
 fn get_buffer(size: usize) -> &'static str {
@@ -188,7 +193,7 @@ fn main() {
 
     println!("generating random data");
     let random_strings = get_random_strings();
-    let buffer = generate_random_bytes(args.buffer_size);//get_buffer(args.buffer_size);
+    let buffer = random_string(args.buffer_size);//get_buffer(args.buffer_size);
 
     println!("producing {} elems per second", args.num_elems_per_second);
     println!("spawning {num_threads} threads");
@@ -201,6 +206,12 @@ fn main() {
 
         thread::spawn(move || {
             let mut rate_limiter = RateLimiter::new(Duration::from_secs(1));
+
+            let mut avg_size = if core_id == 0 {
+                Some(0)
+            } else {
+                None
+            };
 
             loop {
                 let now = Utc::now().to_rfc3339();
@@ -242,6 +253,10 @@ fn main() {
                         }
                     };
 
+                    if let Some(ref mut value) = avg_size {
+                        *value += payload.len()
+                    }
+
                     if let Err((e, _)) =
                         producer.send::<String, String>(BaseRecord::to(&topic).payload(&payload))
                     {
@@ -250,8 +265,15 @@ fn main() {
                             KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull)
                         ) {
                             let _ = producer.flush(Duration::from_secs(10));
+                        } else {
+                            panic!("{:?}", e);
                         }
                     }
+                }
+
+                if let Some(sum) = avg_size.take() {
+                    let avg = sum / num_elems;
+                    info!("average payload size is {} bytes", avg)
                 }
 
                 if let Some(duration) = rate_limiter.sleep() {
